@@ -1,0 +1,27 @@
+# CDK
+cdk.out/
+cdk.context.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# PyCharm
+.idea/
+*.iml
+
+# AWS
+.env
+*.env.local
+
+# OS
+.DS_Store
+Thumbs.db
