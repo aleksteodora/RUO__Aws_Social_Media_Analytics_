@@ -22,7 +22,10 @@ class BronzeStack(Stack):
             auto_delete_objects=True,
             versioned=False,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            event_bridge_enabled=True
         )
+
+        self.data_lake = data_lake
 
         lambda_role = iam.Role(
             self, "HNCollectorRole",
