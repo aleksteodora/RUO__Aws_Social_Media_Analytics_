@@ -1,3 +1,5 @@
+import os
+
 from aws_cdk import (
     Stack,
     Duration,
@@ -73,6 +75,7 @@ class SilverStack(Stack):
                 "BRONZE_HN_PREFIX": "bronze/hacker-news",
                 "BRONZE_TWITTER_KEY": "bronze/twitter/sentiment140.csv",
                 "SILVER_PREFIX": "silver",
+                "DISCORD_WEBHOOK_URL": os.environ.get("DISCORD_WEBHOOK_URL", ""),
             },
         )
 
