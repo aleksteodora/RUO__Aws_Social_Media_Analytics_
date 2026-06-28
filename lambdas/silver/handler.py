@@ -8,6 +8,7 @@ from html.parser import HTMLParser
 import boto3
 import pandas as pd
 import awswrangler as wr
+import requests
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -16,6 +17,7 @@ BUCKET_NAME        = os.environ["BUCKET_NAME"]
 BRONZE_HN_PREFIX   = os.environ["BRONZE_HN_PREFIX"]
 BRONZE_TWITTER_KEY = os.environ["BRONZE_TWITTER_KEY"]
 SILVER_PREFIX      = os.environ["SILVER_PREFIX"]
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
 HN_TYPES = {
     "story":   None,
@@ -24,6 +26,19 @@ HN_TYPES = {
     "job":     "story_text",
     "poll":    "story_text",
 }
+
+
+def notify_discord(message: str):
+    if not DISCORD_WEBHOOK:
+        logger.warning("DISCORD_WEBHOOK_URL not set — skipping notification")
+        return
+    try:
+        payload = {"content": f":red_circle: **Silver Lambda Error**\n```\n{message}\n```"}
+        resp = requests.post(DISCORD_WEBHOOK, json=payload, timeout=5)
+        resp.raise_for_status()
+        logger.info("Discord notification sent")
+    except Exception as e:
+        logger.error(f"Failed to send Discord notification: {e}")
 
 class _HTMLStripper(HTMLParser):
     def __init__(self):
@@ -241,48 +256,55 @@ def write_users(df: pd.DataFrame):
 def process(event, _context):
     logger.info(f"Silver processor started. Event: {json.dumps(event)}")
 
-    s3_client = boto3.client("s3")
+    try:
+        s3_client = boto3.client("s3")
 
-    paginator = s3_client.get_paginator("list_objects_v2")
-    pages = paginator.paginate(
-        Bucket=BUCKET_NAME,
-        Prefix=f"{BRONZE_HN_PREFIX}/",
-        Delimiter="/",
-    )
-    date_prefixes = []
-    for page in pages:
-        for prefix in page.get("CommonPrefixes", []):
-            date_prefixes.append(prefix["Prefix"].rstrip("/"))
+        paginator = s3_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(
+            Bucket=BUCKET_NAME,
+            Prefix=f"{BRONZE_HN_PREFIX}/",
+            Delimiter="/",
+        )
+        date_prefixes = []
+        for page in pages:
+            for prefix in page.get("CommonPrefixes", []):
+                date_prefixes.append(prefix["Prefix"].rstrip("/"))
 
-    logger.info(f"Found HN date prefixes: {date_prefixes}")
+        logger.info(f"Found HN date prefixes: {date_prefixes}")
 
-    all_posts    = []
-    all_hn_users = []
+        all_posts    = []
+        all_hn_users = []
 
-    for date_prefix in date_prefixes:
-        logger.info(f"Processing HN bronze: {date_prefix}")
-        posts, usernames = read_hn_bronze(s3_client, date_prefix)
-        all_posts.extend(posts)
-        hn_users = build_hn_users(usernames)
-        all_hn_users.extend(hn_users)
+        for date_prefix in date_prefixes:
+            logger.info(f"Processing HN bronze: {date_prefix}")
+            posts, usernames = read_hn_bronze(s3_client, date_prefix)
+            all_posts.extend(posts)
+            hn_users = build_hn_users(usernames)
+            all_hn_users.extend(hn_users)
 
-    twitter_posts, twitter_users = read_twitter_bronze(s3_client)
-    all_posts.extend(twitter_posts)
+        twitter_posts, twitter_users = read_twitter_bronze(s3_client)
+        all_posts.extend(twitter_posts)
 
-    posts_df = pd.DataFrame(all_posts)
-    users_df = pd.DataFrame(all_hn_users + twitter_users)
+        posts_df = pd.DataFrame(all_posts)
+        users_df = pd.DataFrame(all_hn_users + twitter_users)
 
-    logger.info(f"Total posts before dedup: {len(posts_df)}")
-    logger.info(f"Total users before dedup: {len(users_df)}")
+        logger.info(f"Total posts before dedup: {len(posts_df)}")
+        logger.info(f"Total users before dedup: {len(users_df)}")
 
-    posts_df = deduplicate_posts(posts_df)
-    users_df = deduplicate_users(users_df)
+        posts_df = deduplicate_posts(posts_df)
+        users_df = deduplicate_users(users_df)
 
-    logger.info(f"Total posts after dedup: {len(posts_df)}")
-    logger.info(f"Total users after dedup: {len(users_df)}")
+        logger.info(f"Total posts after dedup: {len(posts_df)}")
+        logger.info(f"Total users after dedup: {len(users_df)}")
 
-    write_posts(posts_df)
-    write_users(users_df)
+        write_posts(posts_df)
+        write_users(users_df)
 
-    logger.info("Silver processor completed successfully.")
-    return {"status": "ok", "posts": len(posts_df), "users": len(users_df)}
+        logger.info("Silver processor completed successfully.")
+        return {"status": "ok", "posts": len(posts_df), "users": len(users_df)}
+    
+    except Exception as e:
+        error_msg = f"Silver Lambda failed: {type(e).__name__}: {e}"
+        logger.error(error_msg, exc_info=True)
+        notify_discord(error_msg)
+        raise
